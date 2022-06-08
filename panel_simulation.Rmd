@@ -10,6 +10,7 @@ output:
       keep-tex: true
       toc: false
 fontsize: 12pt
+linkcolor: blue
 ---
 
 <!-- 
@@ -169,7 +170,7 @@ x_{it} &= z_{it} + \mu_{i} + \nu_{t} + \eta_{it} \\
 e_{it} &= \zeta_{i} + \kappa_{t} + \phi_{it} + \vartheta_{it}
 \end{align}
 
-where by construction components with equal subscripts are correlated and have non-zero means, apart from $\vartheta_{it}$, which is a white noise error term, and the instrument, which is constructed independently of the error components thereby satisfying the exclusion restriction. The true effect of $x$ on the outcome is `r b` for all processes. Table \@ref(tab:sum-stats) presents descriptive statistics of the simulated data. Figure \@ref(fig:dist-outcomes) depicts the distribution of the dependent variables in the linear model (a), Poisson count model (b) and zero-inflated Poisson count model (c), whereas \@ref(fig:data-illustration) presents scatter plots of the respective dependent variables with the endogenous regressor.
+where by construction components with equal subscripts are correlated and have non-zero means, apart from $\vartheta_{it}$, which is a white noise error term, and the instrument, which is constructed independently of the error components thereby satisfying the exclusion restriction. The true effect of $x$ on the outcome is `r b` for all processes. Table \@ref(tab:sum-stats) presents descriptive statistics of the simulated data. Figure \@ref(fig:dist-outcomes) depicts the distribution of the dependent variables in the linear model (a), Poisson count model (b) and zero-inflated Poisson count model (c), whereas Figure \@ref(fig:data-illustration) presents scatter plots of the respective dependent variables with the endogenous regressor.
 
 
 ```{r}
