@@ -9,8 +9,15 @@ output:
       extra_dependencies: ["subfig", "amsmath", "afterpage"]
       keep-tex: true
       toc: false
+fontsize: 12pt
 ---
 
+<!-- 
+Notes:
+- If the document is knit with LaTeX, in my opinion your're better off using TinyTex, as RStudio will otherwise not automatically install missing packages, thus your knitting will fail everytime until all missing packges are installed
+- Remember to install bookdown for the pdf_document2 output format -> only bookdown formats are able to do cross-referencing of tables, figures and equations
+- First time running this could take some time as lots of R and LaTeX packages might need to be installed.
+-->
 
 ```{r, include = F}
 knitr::opts_chunk$set(
@@ -252,7 +259,7 @@ mod13 <- feols(log(y_p+1) ~ x + e_xf | id + t,  data = df)
 mod14 <- feols(y_pr ~ 1 | id + t | x ~ z, data = df)
 ```
 
-Next, we estimate the Poisson process using PPML, OLS fixed effects, panel IV and the Control Function method. Table \@ref(tab:reg-pois) illustrates the results. Models 1 through 4 estimate variations of the PPML model, where to the baseline Model 1 with no controls successively individual (Model 2) and time fixed effects (Model 3) are added. Model 4, which constitutes our preferred specification, estimates the Control Function approach by including the estimated residuals from the first stage into the structural equation. The coefficient estimate on the regressor is with `r sprintf("%.3f",mod4$coefficients["x"])` pretty close to the true value `r b`. Models 5-10 estimate variations of OLS regressions. In Models 5-9 the dependent variable is the log-transformed count $\log(y_{it} + 1)$ with the ad-hoc addition of one to incorporate zero counts into the estimation. As for the PPML regressions, fixed effects are successively added to the specification and finally the two IV methods are employed. The coefficient estimates in the models accounting for all sources of endogeneity and OVB is `r mod8$coefficients["fit_x"]`, which is close but somewhat off the true value. Model 10 presents results from regressing the rate $y_{it}/pop_{it}$, as is sometimes done in the literature. The coefficient estimate is `r sprintf("%.3f",mod14$coefficients["fit_x"])` and completely off target. 
+Next, we estimate the Poisson process using PPML, OLS fixed effects, panel IV and the Control Function method. Table \@ref(tab:reg-pois) illustrates the results. Models 1 through 4 estimate variations of the PPML model, where to the baseline Model 1 with no controls successively individual (Model 2) and time fixed effects (Model 3) are added. Model 4, which constitutes our preferred specification, estimates the Control Function approach by including the estimated residuals from the first stage into the structural equation. The coefficient estimate on the regressor is with `r sprintf("%.3f",mod4$coefficients["x"])` pretty close to the true value `r b`. Models 5-10 estimate variations of OLS regressions. In Models 5-9 the dependent variable is the log-transformed count $\log(y_{it} + 1)$ with the ad-hoc addition of one to incorporate zero counts into the estimation. As for the PPML regressions, fixed effects are successively added to the specification and finally the two IV methods are employed. The coefficient estimates in the models accounting for all sources of endogeneity and OVB is `r sprintf("%.3f",mod12$coefficients["fit_x"])`, which is close but somewhat off the true value. Model 10 presents results from regressing the rate $y_{it}/pop_{it}$, as is sometimes done in the literature. The coefficient estimate is `r sprintf("%.3f",mod14$coefficients["fit_x"])` and completely off target. 
 
 \afterpage{
 ```{r reg-pois}
@@ -315,10 +322,10 @@ In this section, we simulate the zero-inflated Poisson process `r M` times and e
 RMSE(\hat{\theta}) = \sqrt{MSE(\hat{\theta})} = \sqrt{E[(\hat{\theta}-\theta)^2]},
 \end{equation}
 
-which we approximate by its sample counterpart $RMSE(\hat{\theta}) = \sqrt{\frac{1}{M}\sum_{m=1}^M (\hat{\theta}_m-\theta)^2}$, where $\hat{\theta}_m$ denotes the coefficient estimate for $\theta$ of simulation $m$. The RMSE is the standard deviation of the prediction errors and hence gives an indication of how far off the estimates are from the true value. 
+which we approximate by its sample counterpart $RMSE(\hat{\theta}) = \sqrt{\frac{1}{M}\sum_{m=1}^M (\hat{\theta}_m-\theta)^2}$, where $\hat{\theta}_m$ denotes the coefficient estimate for $\theta$ of simulation $m$. The RMSE is the standard deviation of the prediction errors^[Note that this only holds true if the predictor, in this case the coefficient estimate, is unbiased. In our case the mean predition error for the log-linear model is not zero.] and hence gives an indication of how far off the estimates are from the true value. 
 
 ```{r}
-M <- 500
+M <- 1000
 binct <- M/10
 ```
 
@@ -369,17 +376,29 @@ load("panel_sim_lnst.Rdata")
 ```
 
 
-The sample is based on `r N` individuals and `r Ts` time periods. Figure \@ref(fig:sim-res-lnst) illustrates the distribution of estimates for the `r M` simulations. The two panels show histograms with `r binct` bins each. The RMSE of the estimates from the PPML model is `r sprintf("%.2f",rmse_sim1[1])`, whereas the RMSE for the log-linear model is `r sprintf("%.2f",rmse_sim1[2])`, which is `r sprintf("%.2f%% %s",(rmse_sim1[2]-rmse_sim1[1])/rmse_sim1[1]*100, ifelse(rmse_sim1[2]-rmse_sim1[1] >0,"larger","smaller"))`. Hence, the PPML model performs `r ifelse(rmse_sim1[1] < rmse_sim1[2],"better","worse")` than the log-linear specification.
+The sample is based on `r N` individuals and `r Ts` time periods. Figure \@ref(fig:sim-res-lnst) illustrates the distribution of estimation errors for the `r M` simulations. The two panels show histograms with `r binct` bins each. The red vertical line indicates the mean prediction error, while the arrows indicate one-standard-deviation bounds.^[For the PPML estimates, this is just the RMSE. For the biased log-linear model, the mean prediction error needs to be considered when calculating the standard errors of the prediction errors.] The RMSE of the estimates from the PPML model is `r sprintf("%.2f",rmse_sim1[1])`, whereas the RMSE for the log-linear model is `r sprintf("%.2f",rmse_sim1[2])`, which is `r sprintf("%.2f%% %s",(rmse_sim1[2]-rmse_sim1[1])/rmse_sim1[1]*100, ifelse(rmse_sim1[2]-rmse_sim1[1] >0,"larger","smaller"))`. Hence, the PPML model performs `r ifelse(rmse_sim1[1] < rmse_sim1[2],"better","worse")` than the log-linear specification.
 
 ```{r sim-res-lnst, fig.cap="Distribution of Prediction Error for Simulation 1", fig.subcap=c("Poisson Control Function", "Log-linear Control Function"), out.width="50%"}
 mpe_ppmle <- mean(res$PoissonControlFunction-b)
 mpe_ll <- mean(res$LogLinControlFunction-b)
-ggplot(res,aes(PoissonControlFunction-b)) + geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ppmle,linetype="dashed",color="red") +
-  annotate(x = mpe_ppmle-rmse_sim1[1], xend = mpe_ppmle+rmse_sim1[1],y=20,yend = 20,geom = "segment", arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
-  annotate(x = mpe_ppmle, y = 20, geom="label",label=sprintf("MPE = %.2f",mpe_ppmle))
-ggplot(res,aes(LogLinControlFunction-1)) + geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ll,linetype="dashed",color="red") +
-  annotate(x = mpe_ll-rmse_sim1[2], xend = mpe_ll+rmse_sim1[2],y=20,yend = 20,geom = "segment", arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
-  annotate(x = mpe_ll, y = 20, geom="label",label=sprintf("MPE = %.2f",mpe_ll))
+sd_pell <- sqrt(rmse_sim1[2]^2-mpe_ll^2)
+ggplot(res,aes(PoissonControlFunction-b)) + 
+  geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ppmle,linetype="dashed",color="red") +
+  annotate(x = mpe_ppmle-rmse_sim1[1], 
+           xend = mpe_ppmle+rmse_sim1[1],
+           y=20,yend = 20,
+           geom = "segment", 
+           arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
+  annotate(x = mpe_ppmle, y = 15, geom="label",label=sprintf("M(SD) = %.2f (%.2f)",mpe_ppmle,rmse_sim1[1]))
+
+ggplot(res,aes(LogLinControlFunction-b)) + 
+  geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ll,linetype="dashed",color="red") +
+  annotate(x = mpe_ll-sd_pell, 
+           xend = mpe_ll+sd_pell,
+           y=20,yend = 20,
+           geom = "segment", 
+           arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
+  annotate(x = mpe_ll, y = 15, geom="label",label=sprintf("M(SD) = %.2f(%.2f)",mpe_ll,sd_pell))
 ```
 
 ## Small N, Large T{#sec:simsnlt}
@@ -399,8 +418,6 @@ b <-  1
 infl <- 0.3
 rho <- 0
 ```
-
-Sample is based on `r N` individuals and `r Ts` time periods.
 
 ```{r, eval = run_sim}
 sims <- 1:M
@@ -435,10 +452,28 @@ The sample is based on `r N` individuals and `r Ts` time periods. Figure \@ref(f
 ```{r sim-res-snlt, fig.cap="Distribution of Prediction Error for Simulation 2", fig.subcap=c("Poisson Control Function", "Log-linear Control Function"), out.width="50%"}
 mpe_ppmle <- mean(res$PoissonControlFunction-b)
 mpe_ll <- mean(res$LogLinControlFunction-b)
-ggplot(res,aes(PoissonControlFunction-b)) + geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ppmle,linetype="dashed",color="red") +
-  annotate(x = mpe_ppmle-rmse_sim2[1], xend = mpe_ppmle+rmse_sim2[1],y=20,yend = 20,geom = "segment", arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
-  annotate(x = mpe_ppmle, y = 20, geom="label",label=sprintf("MPE = %.2f",mpe_ppmle))
-ggplot(res,aes(LogLinControlFunction-1)) + geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ll,linetype="dashed",color="red") +
-  annotate(x = mpe_ll-rmse_sim2[2], xend = mpe_ll+rmse_sim2[2],y=20,yend = 20,geom = "segment", arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
-  annotate(x = mpe_ll, y = 20, geom="label",label=sprintf("MPE = %.2f",mpe_ll))
+sd_pell <- sqrt(rmse_sim2[2]^2-mpe_ll^2)
+ggplot(res,aes(PoissonControlFunction-b)) + 
+  geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ppmle,linetype="dashed",color="red") +
+  annotate(x = mpe_ppmle-rmse_sim2[1], 
+           xend = mpe_ppmle+rmse_sim2[1],
+           y=20,yend = 20,
+           geom = "segment", 
+           arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
+  annotate(x = mpe_ppmle, y = 15, geom="label",
+           label=sprintf("M(SD) = %.2f(%.2f)",mpe_ppmle,rmse_sim2[1]))
+
+ggplot(res,aes(LogLinControlFunction-b)) + 
+  geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ll,linetype="dashed",color="red") +
+  annotate(x = mpe_ll-sd_pell, 
+           xend = mpe_ll+sd_pell,
+           y=20,yend = 20,
+           geom = "segment", 
+           arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
+  annotate(x = mpe_ll, y = 15, geom="label",
+           label=sprintf("M(SD) = %.2f(%.2f)",mpe_ll,sd_pell))
 ```
+
+# Conclusion{#sec:concl}
+
+The simulations indicate that the Control Function approach with fixed effects yields consistent estimates in the presence of several sources of OVB and endogeneity. 
