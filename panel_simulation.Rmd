@@ -1,0 +1,444 @@
+---
+title: "Linear and Non-Linear Panel IV Estimators and the Control Function Approach -- A Simulation Based Investigation of Estimator Performance"
+author:
+  -   Richard Winter^[University of Mannheim, rwinter@uni-mannheim.de]
+date: "`r Sys.Date()`"
+abstract: "In this brief I investigate the performance of the Control Function method used to identify a causal effect in the presence of endogeneity of the treatment variable. The methods will be illustrated for linear and non-linear panel models, and in a simulation exercise the Control Function method will be compared for PPML and Log-Linear Panel OLS."
+output:
+    bookdown::pdf_document2: 
+      extra_dependencies: ["subfig", "amsmath", "afterpage"]
+      keep-tex: true
+      toc: false
+---
+
+
+```{r, include = F}
+knitr::opts_chunk$set(
+  echo = F,
+  warning = F,
+  message = F,
+  fig.align = 'center'
+)
+```
+
+```{r}
+# The simulations take time. If it already ran, set this variable equal to FALSE in order to use the stored simulation results
+run_sim <- F
+```
+
+
+```{r}
+pacman::p_load(tidyverse,pglm,VGAM,fixest,kableExtra,modelsummary)
+
+theme_set(theme_bw())
+
+set.seed(42)
+```
+\vfill
+```{r, out.width="0.75\\textwidth", fig.cap="The Hunt for Truth"}
+knitr::include_graphics("answers.jpg")
+```
+\vfill
+\newpage
+
+# Introduction{#sec:intro}
+
+This paper evaluates the performance of several approaches to account for omitted variable bias and endogeneity in linear and non-linear panel models. To this end, three data generating processes will be simulated and estimated.
+
+**Linear Panel Data Model**
+
+To start off, we take a closer look at a linear panel data model with time-invariant individual effects $c_i$, time fixed effects $\lambda_t$ and an endogenous regressor $x_{it}$. The model thus can be specified as follows:
+
+\begin{equation}
+y_{it} = x_{it} + c_i + \lambda_t + \varepsilon_{it},
+\end{equation}
+
+where $Cov(x_{it},c_i)\neq 0$, $Cov(c_i \varepsilon_{it})\neq 0$, $Cov(x_{it}\lambda_t)\neq0$, $Cov(\lambda_t \varepsilon_{it})\neq 0$ and $Cov(x_{it}\varepsilon_{it}) \neq 0$.
+
+Hence, we are confronted with omitted variable bias, two-way error clustering as well as endogeneity of the explanatory variable even after controlling for individual and time fixed effects, as the model features time-varying shocks that are related both to the regressor as well as the outcome of interest.
+
+To identify the causal effect of $x_{it}$ on $y_{it}$, we have an exogenous instrument $z_{it}$, that is uncorrelated with all components of the composite error term $\varepsilon_{it}$. 
+
+**Poisson Panel Data Model**
+
+For our second process, we simulate a Poisson distributed outcome variable with conditional mean
+
+\begin{equation}
+E[y_{it}|x,\gamma_i,\delta_t] = \exp\{\beta_1 x_{it} + \gamma_i + \delta_t\ + \log(n_{it})\}
+\end{equation}
+
+where the fixed effects are analogous to the linear panel specification. The offset $n$ can be interpreted as the population size in period t.
+
+**Zero-Inflated Poisson Panel Data Model**
+
+The final model we consider is a zero-inflated Poisson model given by
+
+\begin{equation}
+E[y_{it}|x,\gamma_i,\delta_t] = \begin{cases}
+0 & \text{with probability } \pi\\
+\exp\{\beta_1 x_{it} + \gamma_i + \delta_t + \log(n_{it})\} & \text{with probability } (1-\pi),
+\end{cases}
+\end{equation}
+
+with otherwise identical structure as the regular Poisson model.
+
+# Example Simulation and Estimation{#sec:exsimest}
+
+```{r}
+sim_data <- function(N=500, Ts=10, 
+                     mu_c = c(0,0), sigma_c = matrix(c(2,1,1,2),ncol=2),
+                     mu_t = c(0,0), sigma_t = matrix(c(2,1,1,2),ncol=2),
+                     mu_ct = c(0,0), sigma_ct = matrix(c(2,1,1,2),ncol=2),
+                     mu_z = 0, sigma_z = 1,
+                     b = 0.5,
+                     infl=0.1,
+                     rho=0.6){
+  df <- data.frame(
+    id = sort(rep(1:N,Ts)),
+    t = rep(1:Ts,N))
+  values_c <- MASS::mvrnorm(N,mu=mu_c,Sigma=sigma_c)
+  values_t <- MASS::mvrnorm(Ts,mu=mu_t,Sigma=sigma_t)
+  values_ct <- MASS::mvrnorm(N*Ts,mu=mu_ct,Sigma=sigma_ct)
+  
+  c <- data.frame(id= 1:N,c1 = values_c[,1], c2=values_c[,2])
+  t <- data.frame(t = 1:Ts, t1 = values_t[,1], t2 =values_t[,2])
+  df <- merge(df,c)
+  df <- merge(df,t)
+  df$ct1 <- values_ct[,1]
+  df$ct2 <- values_ct[,2]
+  df <- df[order(df$id,df$t),]
+  df <- pdata.frame(df,index=c("id","t"))
+  df <- df %>% 
+    mutate(ae = rnorm(N*Ts,0,0.2)) %>% 
+    mutate(ae = ae + rho*lag(ae))
+  df <- within(df,{
+    z <- rnorm(N*Ts,mu_z,sigma_z)
+    x <- z + c1 + t1 + ct1
+    e <- c2 + t2 + ct2 + ae
+    y <- b*x + e})
+  df$e_xf <- residuals(feols(x~z | id + t, data = df))
+  df <- as.data.frame(df)
+  df <- df %>% 
+    mutate(across(.cols = -c(t,id), .fns = as.numeric))
+  df <- df %>% 
+    mutate(dpop = runif(N*Ts,100,1000)) %>% 
+    group_by(id) %>% 
+    mutate(pop = cumsum(dpop)) %>% 
+    ungroup() %>% 
+    mutate(y_p = rpois(N*Ts,lambda = exp(y + log(pop))),
+           y_p0 = rzipois(N*Ts, lambda = exp(y + log(pop)), pstr0 = infl),
+           y_pr = y_p / pop,
+           y_p0r = y_p0/pop)
+  return(df)
+}
+```
+
+
+```{r}
+N <- 500
+Ts <- 10
+mu_c <- c(-0.5,-0.5)
+sigma_c <- matrix(c(0.5,0.4,0.4,0.5),ncol=2)
+mu_t <- c(-.5,-0.5)
+sigma_t <-  matrix(c(0.6,0.5,0.5,0.7),ncol=2)
+mu_ct <-  c(-0.2,-0.5)
+sigma_ct <-  matrix(c(0.8,0.3,0.3,0.6),ncol=2)
+mu_z <- -0.2
+sigma_z <- 0.5
+b <-  1
+infl <- 0.3
+rho <- 0
+M <- 500
+```
+
+## Simulated Data{#sec:exsim}
+
+In this section, we simulate our three data processes one time each as an example of how estimation is carried out. We focus here on the point estimates and just note that the standard errors for the control function approaches are incorrect and should be computed via bootstrap procedures. However, for the purposes of this illustration the point estimates will suffice.
+
+We simulate a dataset of `r N` individuals observed over `r Ts` time periods. The regressor $x$ and the composite error term $\varepsilon_{it}$ is simulated by 
+
+\begin{align}
+x_{it} &= z_{it} + \mu_{i} + \nu_{t} + \eta_{it} \\
+e_{it} &= \zeta_{i} + \kappa_{t} + \phi_{it} + \vartheta_{it}
+\end{align}
+
+where by construction components with equal subscripts are correlated and have non-zero means, apart from $\vartheta_{it}$, which is a white noise error term, and the instrument, which is constructed independently of the error components thereby satisfying the exclusion restriction. The true effect of $x$ on the outcome is `r b` for all processes. Table \@ref(tab:sum-stats) presents descriptive statistics of the simulated data. Figure \@ref(fig:dist-outcomes) depicts the distribution of the dependent variables in the linear model (a), Poisson count model (b) and zero-inflated Poisson count model (c), whereas \@ref(fig:data-illustration) presents scatter plots of the respective dependent variables with the endogenous regressor.
+
+
+```{r}
+df <- sim_data(N=N, Ts=Ts, 
+               mu_c = mu_c, sigma_c=sigma_c,
+               mu_t = mu_t, sigma_t=sigma_t,
+               mu_ct=mu_ct,sigma_ct=sigma_ct,
+               b=b)
+```
+
+```{r sum-stats}
+datasummary(x + z + pop + y + y_p + y_p0 + y_pr + y_p0r ~ Mean + SD + Median + P25 + P75 + Min + Max, data = df, ourput="kableExtra",
+            title = "Descriptive Statistics") %>% 
+  footnote(sprintf("Summary Statistics for the explanatory variables and outcomes for the three processes. Statistics are based on %s individuals observed for %s periods, yielding a sample size of %s.",N,Ts,N*Ts),threeparttable = T)
+```
+
+
+
+```{r dist-outcomes, fig.cap = "Distribution of Outcome Variables", fig.subcap=c("Linear Panel Model", "Poisson Panel Model", "Zero-Inflated Poisson Model"), out.width="50%", fig.ncol=2}
+ggplot(df,aes(y)) +
+  geom_histogram(bins=100) +
+  labs(x= "Count",
+       y= "Outcome")
+
+ggplot(df,aes(y_p)) + 
+  geom_histogram(bins=100) +
+  labs(x= "Count",
+       y= "Outcome") +
+  scale_x_continuous(limits = c(-5,1000),labels=function(x)format(x,scientific=F,big.mark=","))
+
+ggplot(df,aes(y_p0)) + 
+  geom_histogram(bins=500) +
+  labs(x= "Count",
+       y= "Outcome") +
+  scale_x_continuous(limits = c(-5,1000),labels=function(x)format(x,scientific=F,big.mark=","))
+```
+
+
+```{r data-illustration, fig.cap="Joint distribution of Outcome and Endogenous Regressor", fig.subcap=c("Linear Panel Model", "Poisson Panel Model", "Zero-Inflated Poisson Model"), out.width="50%", fig.ncol=2}
+ggplot(df,aes(x,y)) +
+  geom_point()
+
+ggplot(df,aes(x,y_p)) + 
+  geom_point() +
+  scale_y_continuous(limits = c(0,1000),labels=function(x)format(x,scientific=F,big.mark=","))
+
+ggplot(df,aes(x,y_p0)) + 
+  geom_point() +
+  scale_y_continuous(limits = c(0,1000),labels=function(x)format(x,scientific=F,big.mark=","))
+```
+
+## Estimation{#sec:est}
+
+### Linear Model{#sec:lm}
+
+```{r}
+mod1 <- feols(y ~ x, data = df, cluster = c("id"))
+mod2 <- feols(y ~ x | id, data = df)
+mod3 <- feols(y ~ x | id + t, data = df)
+mod4 <- feols(y ~ 1 | id + t | x ~ z, data = df)
+mod5 <- feols(y ~ x + e_xf | id + t, data = df)
+```
+
+We begin by estimating the linear model using OLS fixed effects, instrumental variables and the Control Function method. The results are presented in Table \@ref(tab:reg-lin). The way we set up the data generating process, all omitted variables are positively correlated with the endogenous regressor. Hence, as expected, the slope coefficient in the pooled bivariate regression overstates the true effect of $x$ on $y$ substantially, the upward-biased point estimate from Model 1 is `r sprintf("%.3f",mod1$coefficients["x"])`. The inclusion of individual and time fixed effects in Models 2 and 3 decrease the upward bias substantially and yield coefficient estimates of `r sprintf("%.3f",mod2$coefficients["x"])` and `r sprintf("%.3f",mod3$coefficients["x"])` respectively. Models 4 and 5 implement 2SLS and the Control Function approach to account for the remaining endogeneity in the regressor. In the linear model, the two approaches are equivalent, which is confirmed by the identical coefficient estimates of `r sprintf("%.3f",mod4$coefficients["fit_x"])`. 
+
+As we can see, for the case of a continuous dependent variable and a linear conditional mean specification, both instrumental variable methods can account for several sources of endogenity and precisely estimate the causal effect of interest.
+
+```{r reg-lin}
+msummary(list(mod1, mod2, mod3, mod4, mod5), output="kableExtra",
+         title = "Regression Results Linear Process") %>% 
+  footnote("This table presents estimation results for the linear panel data process. Model 1 estimates a pooled regression without fixed effects. Models 2 and 3 successively add individual and time fixed effects. Model 4 employs the 2SLS estimator. Model 5 estimates the causal effect using the Control Function method.", threeparttable=T)
+```
+
+
+### Poisson distribution{#sec:pois}
+
+```{r }
+mod5 <- feglm(y_p ~ x, offset = ~log(pop), data=df,family=quasipoisson, cluster = "id")
+mod6 <- feglm(y_p ~ x | id, offset = ~log(pop), data = df, family = quasipoisson)
+mod7 <- feglm(y_p ~ x | id+t, offset = ~log(pop), data = df, family = quasipoisson)
+mod8 <- feglm(y_p ~ x + e_xf | id + t, offset = ~log(pop), data=df, family=quasipoisson)
+mod9 <- feols(log(y_p+1)~ x , data = df, cluster="id")
+mod10 <- feols(log(y_p+1) ~ x | id, data = df)
+mod11 <- feols(log(y_p+1) ~ x | id + t, data = df)
+mod12 <- feols(log(y_p+1) ~ 1 | id + t | x ~ z, data = df)
+mod13 <- feols(log(y_p+1) ~ x + e_xf | id + t,  data = df)
+mod14 <- feols(y_pr ~ 1 | id + t | x ~ z, data = df)
+```
+
+Next, we estimate the Poisson process using PPML, OLS fixed effects, panel IV and the Control Function method. Table \@ref(tab:reg-pois) illustrates the results. Models 1 through 4 estimate variations of the PPML model, where to the baseline Model 1 with no controls successively individual (Model 2) and time fixed effects (Model 3) are added. Model 4, which constitutes our preferred specification, estimates the Control Function approach by including the estimated residuals from the first stage into the structural equation. The coefficient estimate on the regressor is with `r sprintf("%.3f",mod4$coefficients["x"])` pretty close to the true value `r b`. Models 5-10 estimate variations of OLS regressions. In Models 5-9 the dependent variable is the log-transformed count $\log(y_{it} + 1)$ with the ad-hoc addition of one to incorporate zero counts into the estimation. As for the PPML regressions, fixed effects are successively added to the specification and finally the two IV methods are employed. The coefficient estimates in the models accounting for all sources of endogeneity and OVB is `r mod8$coefficients["fit_x"]`, which is close but somewhat off the true value. Model 10 presents results from regressing the rate $y_{it}/pop_{it}$, as is sometimes done in the literature. The coefficient estimate is `r sprintf("%.3f",mod14$coefficients["fit_x"])` and completely off target. 
+
+\afterpage{
+```{r reg-pois}
+msummary(list(mod5,mod6,mod7,mod8,mod9,mod10,mod11,mod12,mod13,mod14), output = "kableExtra",
+  title="Regression Results Poisson Process") %>% 
+  add_header_above(header= c(
+    " " = 1,
+    "PPML" = 4,
+    "OLS" = 6
+  )) %>% 
+  footnote("This table shows estimation results for the Poisson model. The first three models are estimated using PPML while models 4, 5 and 6 employ linear models using the log transformation of the dependent variable. Model 1 estimates a pooled Poisson model, Model 2 and 3 add individual and time fixed effects, whereas Model 4 estimates the Control Function approach using first stage residuals in the second stage. Model 5 estimates a pooled model with the log transformation as dependent variable", threeparttable=T) %>% 
+  landscape()
+```
+}
+
+### Zero-Inflated Poisson Distribution{#sec:zipois}
+
+```{r}
+mod15 <- feglm(y_p0 ~ x, offset = ~log(pop), data=df,family=quasipoisson, cluster="id")
+mod16 <- feglm(y_p0 ~ x | id, offset = ~log(pop), data = df, family = quasipoisson)
+mod17 <- feglm(y_p0 ~ x | id+t, offset = ~log(pop), data = df, family = quasipoisson)
+mod18 <- feglm(y_p0 ~ x + e_xf | id + t, offset = ~log(pop), data=df, family=quasipoisson)
+mod19 <- feols(log(y_p0+1)~ x , data = df, cluster="id")
+mod20 <- feols(log(y_p0+1) ~ x | id, data = df)
+mod21 <- feols(log(y_p0+1) ~ x | id + t, data = df)
+mod22 <- feols(log(y_p0+1) ~ 1 | id + t | x ~ z, data = df)
+mod23 <- feols(log(y_p0+1) ~ x + e_xf | id + t,  data = df)
+mod24 <- feols(y_p0r ~ 1 | id + t | x ~ z, data = df)
+```
+
+Finally, we repeat the analysis of the preceding section for the zero-inflated Poisson process. The results are depicted in Table \@ref(tab:reg-zipois). The basic model structure is equivalent to the one in Table \@ref(tab:reg-pois), and we see similar patterns for the PPML models. Interestingly, the introduction of a larger zero count mass introduces a downward bias in the estimation. The estimated coefficients are consistently lower when compared to the respective models in Table \@ref(tab:reg-pois). For the pooled and fixed effects regressions, the upward and downward biases almost exactly cancel out, whereas the instrumental variable approaches, which correctly account for the endogeneity of the regressor, are now downward biased and with `r sprintf("%.3f", mod22$coefficients["fit_x"])` substantially below the true value `r b`.
+
+\afterpage{
+```{r reg-zipois}
+msummary(list(mod15,mod16,mod17,mod18,mod19,mod20,mod21,mod22,mod23,mod24), output = "kableExtra",
+  title = "Regression Results Zero-Inflated Poisson Process") %>% 
+  add_header_above(header= c(
+    " " = 1,
+    "PPML" = 4,
+    "OLS" = 6
+  )) %>% 
+  footnote("This table shows estimation results for the Poisson model. The first three models are estimated using PPML while models 4, 5 and 6 employ linear models using the log transformation of the dependent variable. Model 1 estimates a pooled Poisson model, Model 2 and 3 add individual and time fixed effects, whereas Model 4 estimates the Control Function approach using first stage residuals in the second stage. Model 5 estimates a pooled model with the log transformation as dependent variable", threeparttable=T) %>% 
+  landscape()
+```
+}
+
+# Simulation of Control Function Approach{#sec:simcf}
+
+```{r}
+rmse <- function(x,theta){
+  r <- sqrt(mean((x-theta)^2))
+  return(r)
+}
+```
+
+
+In this section, we simulate the zero-inflated Poisson process `r M` times and examine the distribution of estimates for the PPML Control Function approach (Table \@ref(tab:reg-zipois), Model 4) in comparison to the Log-linear Panel Control Function method (Table \@ref(tab:reg-zipois, Model 9). In order to make an informed choice about which estimator performs better, we provide histograms of the simulated coefficient estimates. Furthermore, we compute a comparative measure for estimator performance, namely, the Root Mean Squared Error (RMSE). The RMSE for a parameter $\theta$ is defined as
+
+\begin{equation}
+RMSE(\hat{\theta}) = \sqrt{MSE(\hat{\theta})} = \sqrt{E[(\hat{\theta}-\theta)^2]},
+\end{equation}
+
+which we approximate by its sample counterpart $RMSE(\hat{\theta}) = \sqrt{\frac{1}{M}\sum_{m=1}^M (\hat{\theta}_m-\theta)^2}$, where $\hat{\theta}_m$ denotes the coefficient estimate for $\theta$ of simulation $m$. The RMSE is the standard deviation of the prediction errors and hence gives an indication of how far off the estimates are from the true value. 
+
+```{r}
+M <- 500
+binct <- M/10
+```
+
+## Large N, Small T{#sec:simlnst}
+
+```{r}
+N <- 1000
+Ts <- 10
+mu_c <- c(-0.5,-0.5)
+sigma_c <- matrix(c(0.5,0.4,0.4,0.5),ncol=2)
+mu_t <- c(-.5,-0.5)
+sigma_t <-  matrix(c(0.6,0.5,0.5,0.7),ncol=2)
+mu_ct <-  c(-0.2,-0.5)
+sigma_ct <-  matrix(c(0.8,0.3,0.3,0.6),ncol=2)
+mu_z <- -0.2
+sigma_z <- 0.5
+b <-  1
+infl <- 0.3
+rho <- 0
+```
+
+```{r, eval = run_sim}
+sims <- 1:M
+res <- sapply(sims, FUN = function(s){
+  df <- sim_data(N=N, Ts=Ts, 
+               mu_c = mu_c, sigma_c=sigma_c,
+               mu_t = mu_t, sigma_t=sigma_t,
+               mu_ct=mu_ct,sigma_ct=sigma_ct,
+               b=b)
+  mod2 <- feols(log(y_p0+1) ~ x  + e_xf | id + t, data=df)
+  return(list(
+    tryCatch(feglm(y_p0~ x + e_xf | id + t, offset = ~log(pop), data=df,family=quasipoisson)$coefficients["x"],error=function(e)NA),
+    mod2$coefficients["x"]))
+})
+res <- t(res)
+colnames(res) <- c("PoissonControlFunction", "LogLinControlFunction")
+res <- as.data.frame(res)
+res <- res %>% 
+  mutate(across(.fns = unlist))
+
+rmse_sim1 <- sapply(res,rmse,theta=b)
+
+save(res,rmse_sim1,b,file="panel_sim_lnst.Rdata")
+```
+
+```{r,}
+load("panel_sim_lnst.Rdata")
+```
+
+
+The sample is based on `r N` individuals and `r Ts` time periods. Figure \@ref(fig:sim-res-lnst) illustrates the distribution of estimates for the `r M` simulations. The two panels show histograms with `r binct` bins each. The RMSE of the estimates from the PPML model is `r sprintf("%.2f",rmse_sim1[1])`, whereas the RMSE for the log-linear model is `r sprintf("%.2f",rmse_sim1[2])`, which is `r sprintf("%.2f%% %s",(rmse_sim1[2]-rmse_sim1[1])/rmse_sim1[1]*100, ifelse(rmse_sim1[2]-rmse_sim1[1] >0,"larger","smaller"))`. Hence, the PPML model performs `r ifelse(rmse_sim1[1] < rmse_sim1[2],"better","worse")` than the log-linear specification.
+
+```{r sim-res-lnst, fig.cap="Distribution of Prediction Error for Simulation 1", fig.subcap=c("Poisson Control Function", "Log-linear Control Function"), out.width="50%"}
+mpe_ppmle <- mean(res$PoissonControlFunction-b)
+mpe_ll <- mean(res$LogLinControlFunction-b)
+ggplot(res,aes(PoissonControlFunction-b)) + geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ppmle,linetype="dashed",color="red") +
+  annotate(x = mpe_ppmle-rmse_sim1[1], xend = mpe_ppmle+rmse_sim1[1],y=20,yend = 20,geom = "segment", arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
+  annotate(x = mpe_ppmle, y = 20, geom="label",label=sprintf("MPE = %.2f",mpe_ppmle))
+ggplot(res,aes(LogLinControlFunction-1)) + geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ll,linetype="dashed",color="red") +
+  annotate(x = mpe_ll-rmse_sim1[2], xend = mpe_ll+rmse_sim1[2],y=20,yend = 20,geom = "segment", arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
+  annotate(x = mpe_ll, y = 20, geom="label",label=sprintf("MPE = %.2f",mpe_ll))
+```
+
+## Small N, Large T{#sec:simsnlt}
+
+```{r}
+N <- 10
+Ts <- 1000
+mu_c <- c(-0.5,-0.5)
+sigma_c <- matrix(c(0.5,0.4,0.4,0.5),ncol=2)
+mu_t <- c(-.5,-0.5)
+sigma_t <-  matrix(c(0.6,0.5,0.5,0.7),ncol=2)
+mu_ct <-  c(-0.2,-0.5)
+sigma_ct <-  matrix(c(0.8,0.3,0.3,0.6),ncol=2)
+mu_z <- -0.2
+sigma_z <- 0.5
+b <-  1
+infl <- 0.3
+rho <- 0
+```
+
+Sample is based on `r N` individuals and `r Ts` time periods.
+
+```{r, eval = run_sim}
+sims <- 1:M
+res <- sapply(sims, FUN = function(s){
+  df <- sim_data(N=N, Ts=Ts, 
+               mu_c = mu_c, sigma_c=sigma_c,
+               mu_t = mu_t, sigma_t=sigma_t,
+               mu_ct=mu_ct,sigma_ct=sigma_ct,
+               b=b)
+  mod2 <- feols(asinh(y_p0) ~ x  + e_xf | id + t, data=df)
+  return(list(
+    tryCatch(feglm(y_p0~ x + e_xf | id + t, offset = ~log(pop), data=df,family=quasipoisson)$coefficients["x"],error=function(e)NA),
+    mod2$coefficients["x"]))
+})
+res <- t(res)
+colnames(res) <- c("PoissonControlFunction", "LogLinControlFunction")
+res <- as.data.frame(res)
+res <- res %>% 
+  mutate(across(.fns = unlist))
+
+rmse_sim2 <- sapply(res,rmse,theta=b)
+
+save(res,rmse_sim2,b,file="panel_sim_snlt.Rdata")
+```
+
+```{r,}
+load("panel_sim_snlt.Rdata")
+```
+
+The sample is based on `r N` individuals and `r Ts` time periods. Figure \@ref(fig:sim-res-snlt) illustrates the distribution of estimates for the `r M` simulations.  The two panels show histograms with `r binct` bins each. The RMSE of the estimates from the PPML model is `r sprintf("%.2f",rmse_sim2[1])`, whereas the RMSE for the log-linear model is `r sprintf("%.2f",rmse_sim2[2])`, which is `r sprintf("%.2f%% %s",(rmse_sim2[2]-rmse_sim2[1])/rmse_sim2[1]*100, ifelse(rmse_sim2[2]-rmse_sim2[1] >0,"larger","smaller"))`. Hence, the PPML model performs `r ifelse(rmse_sim2[1] < rmse_sim2[2],"better","worse")` than the log-linear specification.
+
+```{r sim-res-snlt, fig.cap="Distribution of Prediction Error for Simulation 2", fig.subcap=c("Poisson Control Function", "Log-linear Control Function"), out.width="50%"}
+mpe_ppmle <- mean(res$PoissonControlFunction-b)
+mpe_ll <- mean(res$LogLinControlFunction-b)
+ggplot(res,aes(PoissonControlFunction-b)) + geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ppmle,linetype="dashed",color="red") +
+  annotate(x = mpe_ppmle-rmse_sim2[1], xend = mpe_ppmle+rmse_sim2[1],y=20,yend = 20,geom = "segment", arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
+  annotate(x = mpe_ppmle, y = 20, geom="label",label=sprintf("MPE = %.2f",mpe_ppmle))
+ggplot(res,aes(LogLinControlFunction-1)) + geom_histogram(bins=binct) + geom_vline(xintercept=mpe_ll,linetype="dashed",color="red") +
+  annotate(x = mpe_ll-rmse_sim2[2], xend = mpe_ll+rmse_sim2[2],y=20,yend = 20,geom = "segment", arrow = grid::arrow(ends="both",length = unit(0.1, "inches"),type="closed")) +
+  annotate(x = mpe_ll, y = 20, geom="label",label=sprintf("MPE = %.2f",mpe_ll))
+```
