@@ -11,6 +11,7 @@ output:
       toc: false
 fontsize: 12pt
 linkcolor: blue
+bibliography: econometrics.bib
 ---
 
 <!-- 
@@ -31,7 +32,7 @@ knitr::opts_chunk$set(
 
 ```{r}
 # The simulations take time. If it already ran, set this variable equal to FALSE in order to use the stored simulation results
-run_sim <- F
+run_sim <- T
 ```
 
 
@@ -155,7 +156,7 @@ mu_z <- -0.2
 sigma_z <- 0.5
 b <-  1
 infl <- 0.3
-rho <- 0
+rho <- 0.8
 M <- 500
 ```
 
@@ -167,7 +168,7 @@ We simulate a dataset of `r N` individuals observed over `r Ts` time periods. Th
 
 \begin{align}
 x_{it} &= z_{it} + \mu_{i} + \nu_{t} + \eta_{it} \\
-e_{it} &= \zeta_{i} + \kappa_{t} + \phi_{it} + \vartheta_{it}
+\varepsilon_{it} &= \zeta_{i} + \kappa_{t} + \phi_{it} + \vartheta_{it}
 \end{align}
 
 where by construction components with equal subscripts are correlated and have non-zero means, apart from $\vartheta_{it}$, which is a white noise error term, and the instrument, which is constructed independently of the error components thereby satisfying the exclusion restriction. The true effect of $x$ on the outcome is `r b` for all processes. Table \@ref(tab:sum-stats) presents descriptive statistics of the simulated data. Figure \@ref(fig:dist-outcomes) depicts the distribution of the dependent variables in the linear model (a), Poisson count model (b) and zero-inflated Poisson count model (c), whereas Figure \@ref(fig:data-illustration) presents scatter plots of the respective dependent variables with the endogenous regressor.
@@ -178,7 +179,8 @@ df <- sim_data(N=N, Ts=Ts,
                mu_c = mu_c, sigma_c=sigma_c,
                mu_t = mu_t, sigma_t=sigma_t,
                mu_ct=mu_ct,sigma_ct=sigma_ct,
-               b=b)
+               b=b,
+               rho = rho)
 ```
 
 ```{r sum-stats}
@@ -234,7 +236,7 @@ mod4 <- feols(y ~ 1 | id + t | x ~ z, data = df)
 mod5 <- feols(y ~ x + e_xf | id + t, data = df)
 ```
 
-We begin by estimating the linear model using OLS fixed effects, instrumental variables and the Control Function method. The results are presented in Table \@ref(tab:reg-lin). The way we set up the data generating process, all omitted variables are positively correlated with the endogenous regressor. Hence, as expected, the slope coefficient in the pooled bivariate regression overstates the true effect of $x$ on $y$ substantially, the upward-biased point estimate from Model 1 is `r sprintf("%.3f",mod1$coefficients["x"])`. The inclusion of individual and time fixed effects in Models 2 and 3 decrease the upward bias substantially and yield coefficient estimates of `r sprintf("%.3f",mod2$coefficients["x"])` and `r sprintf("%.3f",mod3$coefficients["x"])` respectively. Models 4 and 5 implement 2SLS and the Control Function approach to account for the remaining endogeneity in the regressor. In the linear model, the two approaches are equivalent, which is confirmed by the identical coefficient estimates of `r sprintf("%.3f",mod4$coefficients["fit_x"])`. 
+We begin by estimating the linear model using OLS fixed effects, instrumental variables and the Control Function method. The results are presented in Table \@ref(tab:reg-lin). The way we set up the data generating process, all omitted variables are positively correlated with the endogenous regressor. Hence, as expected, the slope coefficient in the pooled bivariate regression overstates the true effect of $x$ on $y$ substantially, the upward-biased point estimate from Model 1 is `r sprintf("%.3f",mod1$coefficients["x"])`. The inclusion of individual and time fixed effects in Models 2 and 3 decrease the upward bias substantially and yield coefficient estimates of `r sprintf("%.3f",mod2$coefficients["x"])` and `r sprintf("%.3f",mod3$coefficients["x"])` respectively. Models 4 and 5 implement 2SLS and the Control Function approach following @wooldridge_control_2015 to account for the remaining endogeneity in the regressor. In the linear model, the two approaches are equivalent, which is confirmed by the identical coefficient estimates of `r sprintf("%.3f",mod4$coefficients["fit_x"])`. 
 
 As we can see, for the case of a continuous dependent variable and a linear conditional mean specification, both instrumental variable methods can account for several sources of endogenity and precisely estimate the causal effect of interest.
 
@@ -345,7 +347,7 @@ mu_z <- -0.2
 sigma_z <- 0.5
 b <-  1
 infl <- 0.3
-rho <- 0
+rho <- 0.8
 ```
 
 ```{r, eval = run_sim}
@@ -355,7 +357,8 @@ res <- sapply(sims, FUN = function(s){
                mu_c = mu_c, sigma_c=sigma_c,
                mu_t = mu_t, sigma_t=sigma_t,
                mu_ct=mu_ct,sigma_ct=sigma_ct,
-               b=b)
+               b=b,
+               rho=rho)
   mod2 <- feols(log(y_p0+1) ~ x  + e_xf | id + t, data=df)
   return(list(
     tryCatch(feglm(y_p0~ x + e_xf | id + t, offset = ~log(pop), data=df,family=quasipoisson)$coefficients["x"],error=function(e)NA),
@@ -417,7 +420,7 @@ mu_z <- -0.2
 sigma_z <- 0.5
 b <-  1
 infl <- 0.3
-rho <- 0
+rho <- 0.8
 ```
 
 ```{r, eval = run_sim}
@@ -427,7 +430,8 @@ res <- sapply(sims, FUN = function(s){
                mu_c = mu_c, sigma_c=sigma_c,
                mu_t = mu_t, sigma_t=sigma_t,
                mu_ct=mu_ct,sigma_ct=sigma_ct,
-               b=b)
+               b=b,
+               rho=rho)
   mod2 <- feols(asinh(y_p0) ~ x  + e_xf | id + t, data=df)
   return(list(
     tryCatch(feglm(y_p0~ x + e_xf | id + t, offset = ~log(pop), data=df,family=quasipoisson)$coefficients["x"],error=function(e)NA),
@@ -478,3 +482,5 @@ ggplot(res,aes(LogLinControlFunction-b)) +
 # Conclusion{#sec:concl}
 
 The simulations indicate that the Control Function approach with fixed effects yields consistent estimates in the presence of several sources of OVB and endogeneity. 
+
+# References{-}
